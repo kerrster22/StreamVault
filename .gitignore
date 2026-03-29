@@ -9,8 +9,23 @@ next.user-config.*
 
 # Environment variables
 .env*.local
+backend/.env
 
 # Common ignores
 node_modules
 .next/
 .DS_Store
+
+# Backend
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite
+
+# Media / data volumes
+/media/
+/data/
+
+# Cookies — never commit session tokens
+/cookies/cookies.txt

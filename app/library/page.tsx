@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import {
   Search,
@@ -29,41 +29,46 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import { mockLibraryItems } from '@/lib/mock-data'
-import { formatDuration, formatFileSize, formatRelativeTime } from '@/lib/api'
+import { getLibrary, formatDuration, formatFileSize, formatRelativeTime } from '@/lib/api'
+import type { LibraryItem } from '@/lib/types'
 import { cn } from '@/lib/utils'
-
-const filterOptions = [
-  { id: 'all', label: 'All', count: mockLibraryItems.length },
-  { id: 'video', label: 'Videos', count: mockLibraryItems.filter(i => i.format !== 'MP3').length },
-  { id: 'audio', label: 'Audio', count: mockLibraryItems.filter(i => i.format === 'MP3').length },
-  { id: 'recent', label: 'Recent' },
-]
 
 export default function LibraryPage() {
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [activeFilter, setActiveFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState('date')
+  const [items, setItems] = useState<LibraryItem[]>([])
 
-  const filteredItems = mockLibraryItems.filter(item => {
-    if (activeFilter === 'video') return item.format !== 'MP3'
-    if (activeFilter === 'audio') return item.format === 'MP3'
-    return true
-  }).filter(item => 
-    item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.uploader.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  useEffect(() => {
+    getLibrary().then(setItems).catch(() => {})
+  }, [])
 
-  const totalSize = mockLibraryItems.reduce((acc, item) => acc + item.filesize, 0)
+  const filterOptions = useMemo(() => [
+    { id: 'all', label: 'All', count: items.length },
+    { id: 'video', label: 'Videos', count: items.filter(i => i.format !== 'mp3').length },
+    { id: 'audio', label: 'Audio', count: items.filter(i => i.format === 'mp3').length },
+    { id: 'recent', label: 'Recent' },
+  ], [items])
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return items.filter(item => {
+      if (activeFilter === 'video' && item.format === 'mp3') return false
+      if (activeFilter === 'audio' && item.format !== 'mp3') return false
+      return item.title.toLowerCase().includes(q) || item.uploader.toLowerCase().includes(q)
+    })
+  }, [items, activeFilter, searchQuery])
+
+  const totalSize = useMemo(() => items.reduce((acc, item) => acc + item.filesize, 0), [items])
 
   return (
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
-      
+
       <main className="flex-1 pl-64">
         <TopBar />
-        
+
         <div className="p-6 space-y-6">
           {/* Header */}
           <div className="flex items-start justify-between">
@@ -76,7 +81,7 @@ export default function LibraryPage() {
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
                 <Film className="h-4 w-4" />
-                <span>{mockLibraryItems.length} items</span>
+                <span>{items.length} items</span>
               </div>
               <div className="flex items-center gap-2">
                 <HardDrive className="h-4 w-4" />
@@ -92,9 +97,8 @@ export default function LibraryPage() {
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
             />
-            
+
             <div className="flex items-center gap-3">
-              {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -105,7 +109,6 @@ export default function LibraryPage() {
                 />
               </div>
 
-              {/* Sort */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" className="gap-2 rounded-xl">
@@ -115,25 +118,20 @@ export default function LibraryPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="rounded-xl">
                   <DropdownMenuItem onClick={() => setSortBy('date')}>
-                    Date Added
-                    {sortBy === 'date' && <span className="ml-auto text-primary">*</span>}
+                    Date Added {sortBy === 'date' && <span className="ml-auto text-primary">✓</span>}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setSortBy('title')}>
-                    Title
-                    {sortBy === 'title' && <span className="ml-auto text-primary">*</span>}
+                    Title {sortBy === 'title' && <span className="ml-auto text-primary">✓</span>}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setSortBy('size')}>
-                    File Size
-                    {sortBy === 'size' && <span className="ml-auto text-primary">*</span>}
+                    File Size {sortBy === 'size' && <span className="ml-auto text-primary">✓</span>}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setSortBy('uploader')}>
-                    Creator
-                    {sortBy === 'uploader' && <span className="ml-auto text-primary">*</span>}
+                    Creator {sortBy === 'uploader' && <span className="ml-auto text-primary">✓</span>}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* View Toggle */}
               <ViewToggle view={view} onViewChange={setView} />
             </div>
           </div>
@@ -172,12 +170,11 @@ export default function LibraryPage() {
   )
 }
 
-function LibraryListItem({ item }: { item: typeof mockLibraryItems[0] }) {
+function LibraryListItem({ item }: { item: LibraryItem }) {
   return (
     <div className="group flex items-center gap-4 rounded-xl border border-border bg-card p-3 transition-colors hover:bg-accent/50">
-      {/* Thumbnail */}
       <div className="relative h-16 w-28 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
-        <Image src={item.thumbnail} alt={item.title} fill className="object-cover" />
+        <Image src={item.thumbnail || '/placeholder.jpg'} alt={item.title} fill className="object-cover" />
         <div className="absolute inset-0 flex items-center justify-center bg-background/50 opacity-0 transition-opacity group-hover:opacity-100">
           <Play className="h-6 w-6 text-foreground" fill="currentColor" />
         </div>
@@ -186,7 +183,6 @@ function LibraryListItem({ item }: { item: typeof mockLibraryItems[0] }) {
         </div>
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1">
         <h3 className="line-clamp-1 font-medium text-foreground group-hover:text-primary transition-colors">
           {item.title}
@@ -194,15 +190,10 @@ function LibraryListItem({ item }: { item: typeof mockLibraryItems[0] }) {
         <p className="text-sm text-muted-foreground">{item.uploader}</p>
       </div>
 
-      {/* Meta */}
       <div className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
         <div className="flex items-center gap-1.5">
-          {item.format === 'MP3' ? (
-            <Music className="h-4 w-4" />
-          ) : (
-            <Film className="h-4 w-4" />
-          )}
-          <span>{item.format}</span>
+          {item.format === 'mp3' ? <Music className="h-4 w-4" /> : <Film className="h-4 w-4" />}
+          <span>{item.format.toUpperCase()}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <HardDrive className="h-4 w-4" />
@@ -217,7 +208,6 @@ function LibraryListItem({ item }: { item: typeof mockLibraryItems[0] }) {
         </span>
       </div>
 
-      {/* Actions */}
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
           <Play className="h-4 w-4" />
@@ -229,23 +219,11 @@ function LibraryListItem({ item }: { item: typeof mockLibraryItems[0] }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="rounded-xl">
-            <DropdownMenuItem className="gap-2">
-              <Play className="h-4 w-4" />
-              Play
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2">
-              <FolderOpen className="h-4 w-4" />
-              Open Folder
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2">
-              <Download className="h-4 w-4" />
-              Re-download
-            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2"><Play className="h-4 w-4" />Play</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2"><FolderOpen className="h-4 w-4" />Open Folder</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2"><Download className="h-4 w-4" />Re-download</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2 text-destructive">
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2 text-destructive"><Trash2 className="h-4 w-4" />Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -260,9 +238,7 @@ function EmptyLibrary() {
         <Film className="h-8 w-8 text-muted-foreground" />
       </div>
       <h3 className="mt-4 text-lg font-semibold text-foreground">Your library is empty</h3>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Download some media to start building your collection
-      </p>
+      <p className="mt-1 text-sm text-muted-foreground">Download some media to start building your collection</p>
       <Button className="mt-4 gap-2">
         <Download className="h-4 w-4" />
         Start Downloading

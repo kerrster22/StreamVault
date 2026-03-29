@@ -33,7 +33,7 @@ export function PlaylistCard({ playlist, href = '#', className }: PlaylistCardPr
           <div className="absolute -right-2 -top-2 h-full w-full rounded-xl bg-muted/30" />
           <div className="relative aspect-video overflow-hidden rounded-xl bg-muted">
             <Image
-              src={playlist.thumbnail}
+              src={playlist.thumbnail || '/placeholder.jpg'}
               alt={playlist.title}
               fill
               className="object-cover transition-transform duration-300 group-hover:scale-105"

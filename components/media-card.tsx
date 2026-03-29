@@ -47,7 +47,7 @@ export function MediaCard({
         {/* Thumbnail */}
         <div className="relative aspect-video overflow-hidden rounded-xl bg-muted">
           <Image
-            src={thumbnail}
+            src={thumbnail || '/placeholder.jpg'}
             alt={title}
             fill
             className="object-cover transition-transform duration-300 group-hover:scale-105"

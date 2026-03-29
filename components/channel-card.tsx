@@ -26,12 +26,14 @@ export function ChannelCard({ channel, href = '#', className }: ChannelCardProps
       <Link href={href} className="block">
         {/* Banner */}
         <div className="relative h-20 overflow-hidden rounded-t-xl bg-muted">
-          <Image
-            src={channel.banner}
-            alt={`${channel.title} banner`}
-            fill
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-          />
+          {channel.banner && (
+            <Image
+              src={channel.banner}
+              alt={`${channel.title} banner`}
+              fill
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
+            />
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-card to-transparent" />
         </div>
 
@@ -41,7 +43,7 @@ export function ChannelCard({ channel, href = '#', className }: ChannelCardProps
           <div className="absolute -top-6 left-4">
             <div className="relative h-12 w-12 overflow-hidden rounded-full border-2 border-card bg-muted ring-2 ring-background">
               <Image
-                src={channel.thumbnail}
+                src={channel.thumbnail || '/placeholder.jpg'}
                 alt={channel.title}
                 fill
                 className="object-cover"

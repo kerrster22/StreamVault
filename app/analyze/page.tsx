@@ -13,6 +13,9 @@ import {
   ArrowLeft,
   Play,
   Clock,
+  AlertTriangle,
+  Lock,
+  Ban,
 } from 'lucide-react'
 import { AppSidebar } from '@/components/app-sidebar'
 import { TopBar } from '@/components/top-bar'
@@ -21,8 +24,42 @@ import { FormatSelector } from '@/components/format-selector'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { analyzeUrl, formatDuration } from '@/lib/api'
+import { analyzeUrl, startDownload, saveChannel, savePlaylist, formatDuration, ApiRequestError } from '@/lib/api'
+import type { ApiError, ApiErrorCode } from '@/lib/api'
 import type { AnalyzeResponse, VideoEntry } from '@/lib/types'
+
+// Per-code UI copy. Shown instead of the raw backend message for known error codes.
+// The backend message stays technical (good for logs); this is what the user sees.
+const ERROR_UI: Record<ApiErrorCode, { heading: string; body: string }> = {
+  AUTH_REQUIRED: {
+    heading: 'Authentication required',
+    body: "YouTube is blocking this request. For videos, a sign-in cookies file is needed. For playlists or channels, this may be YouTube's auth pre-check — check that YTDLP_SKIP_YOUTUBETAB_AUTHCHECK is enabled in your backend config, or add a cookies file.",
+  },
+  RATE_LIMITED: {
+    heading: 'Too many requests',
+    body: 'YouTube is temporarily throttling requests from this server.',
+  },
+  EXTRACTION_FAILED: {
+    heading: 'Could not extract source',
+    body: 'This content could not be loaded. It may be private, deleted, or unavailable in your region.',
+  },
+  UNSUPPORTED_SOURCE: {
+    heading: 'Unsupported source',
+    body: "This URL isn't supported by yt-dlp. Check that it points to a valid video, playlist, or channel.",
+  },
+  INVALID_URL: {
+    heading: 'Invalid URL',
+    body: "The URL doesn't appear to be valid. Double-check it and try again.",
+  },
+  VALIDATION_ERROR: {
+    heading: 'Invalid request',
+    body: 'The request was rejected by the server. Check the URL format.',
+  },
+  INTERNAL_ERROR: {
+    heading: 'Something went wrong',
+    body: 'An unexpected server error occurred. Check the backend logs for details.',
+  },
+}
 
 function AnalyzeContent() {
   const searchParams = useSearchParams()
@@ -31,9 +68,11 @@ function AnalyzeContent() {
   
   const [isLoading, setIsLoading] = useState(true)
   const [source, setSource] = useState<AnalyzeResponse | null>(null)
+  const [analyzeError, setAnalyzeError] = useState<ApiError | null>(null)
   const [selectedFormat, setSelectedFormat] = useState<string | null>(null)
   const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set())
   const [isDownloading, setIsDownloading] = useState(false)
+  const [isSaved, setIsSaved] = useState(false)
 
   useEffect(() => {
     async function analyze() {
@@ -52,6 +91,15 @@ function AnalyzeContent() {
         }
       } catch (error) {
         console.error('Analysis failed:', error)
+        if (error instanceof ApiRequestError) {
+          // Use the structured payload when present; fall back to a generic INTERNAL_ERROR
+          // so the error UI always has a code to branch on.
+          setAnalyzeError(
+            error.apiError ?? { code: 'INTERNAL_ERROR', message: error.message }
+          )
+        } else {
+          setAnalyzeError({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' })
+        }
       } finally {
         setIsLoading(false)
       }
@@ -59,11 +107,23 @@ function AnalyzeContent() {
     analyze()
   }, [url])
 
-  const handleDownload = async () => {
+  const handleDownload = async (mode: 'video' | 'audio' = 'video') => {
+    if (!source) return
     setIsDownloading(true)
-    // Simulate download start
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    router.push('/downloads')
+    try {
+      const formatId = mode === 'audio' ? 'bestaudio' : (selectedFormat || 'best')
+      await startDownload({
+        url,
+        sourceType: source.type,
+        formatId,
+        mode,
+        selectedEntries: selectedEntries.size > 0 ? Array.from(selectedEntries) : undefined,
+      })
+      router.push('/downloads')
+    } catch (err) {
+      console.error('Failed to start download:', err)
+      setIsDownloading(false)
+    }
   }
 
   const toggleEntry = (id: string) => {
@@ -84,6 +144,34 @@ function AnalyzeContent() {
     }
   }
 
+  const handleSave = async () => {
+    if (!source || isSaved) return
+    try {
+      if (source.type === 'channel') {
+        await saveChannel({
+          channelId: source.id,
+          title: source.title,
+          thumbnail: source.thumbnail,
+          banner: source.banner,
+          monitoring: false,
+          url,
+        })
+      } else if (source.type === 'playlist') {
+        await savePlaylist({
+          playlistId: source.id,
+          title: source.title,
+          thumbnail: source.thumbnail,
+          uploader: source.uploader,
+          itemCount: source.entryCount,
+          url,
+        })
+      }
+      setIsSaved(true)
+    } catch (err) {
+      console.error('Failed to save:', err)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -99,13 +187,34 @@ function AnalyzeContent() {
   }
 
   if (!source) {
+    const code = analyzeError?.code ?? 'INTERNAL_ERROR'
+    const ui = ERROR_UI[code] ?? ERROR_UI.INTERNAL_ERROR
+    const isAuth = code === 'AUTH_REQUIRED'
+    const isRateLimit = code === 'RATE_LIMITED'
+    const Icon = isAuth ? Lock : isRateLimit ? Ban : AlertTriangle
+    const actionText = analyzeError?.suggestedAction
+
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-center space-y-4">
-          <h2 className="text-lg font-semibold text-foreground">No source found</h2>
-          <Button onClick={() => router.push('/')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Go Back
+      <div className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-6 text-center">
+          <div className="flex justify-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10">
+              <Icon className="h-7 w-7 text-destructive" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-foreground">{ui.heading}</h2>
+            <p className="text-sm text-muted-foreground">{ui.body}</p>
+          </div>
+          {actionText && (
+            <div className="rounded-lg bg-muted px-4 py-3 text-left text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">What to do: </span>
+              {actionText}
+            </div>
+          )}
+          <Button onClick={() => router.push('/')} className="w-full gap-2">
+            <ArrowLeft className="h-4 w-4" />
+            Try Another URL
           </Button>
         </div>
       </div>
@@ -153,7 +262,7 @@ function AnalyzeContent() {
                 <h2 className="text-lg font-semibold text-foreground">Actions</h2>
                 <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                   <Button
-                    onClick={handleDownload}
+                    onClick={() => handleDownload('video')}
                     disabled={!selectedFormat || isDownloading}
                     className="w-full gap-2"
                   >
@@ -164,13 +273,14 @@ function AnalyzeContent() {
                     )}
                     Download Video
                   </Button>
-                  <Button variant="secondary" className="w-full gap-2">
+                  <Button
+                    variant="secondary"
+                    className="w-full gap-2"
+                    disabled={isDownloading}
+                    onClick={() => handleDownload('audio')}
+                  >
                     <Music className="h-4 w-4" />
                     Extract Audio
-                  </Button>
-                  <Button variant="outline" className="w-full gap-2">
-                    <Bookmark className="h-4 w-4" />
-                    Save Source
                   </Button>
                 </div>
               </div>
@@ -193,7 +303,7 @@ function AnalyzeContent() {
                 </div>
                 <div className="flex gap-2">
                   <Button
-                    onClick={handleDownload}
+                    onClick={() => handleDownload('video')}
                     disabled={selectedEntries.size === 0 || isDownloading}
                     className="gap-2"
                   >
@@ -204,9 +314,9 @@ function AnalyzeContent() {
                     )}
                     Download Selected
                   </Button>
-                  <Button variant="outline" className="gap-2">
-                    <Bookmark className="h-4 w-4" />
-                    Save Playlist
+                  <Button variant="outline" className="gap-2" onClick={handleSave} disabled={isSaved}>
+                    <Bookmark className={`h-4 w-4 ${isSaved ? 'fill-current' : ''}`} />
+                    {isSaved ? 'Saved' : 'Save Playlist'}
                   </Button>
                 </div>
               </div>
@@ -232,11 +342,11 @@ function AnalyzeContent() {
               {/* Channel actions */}
               <div className="flex items-center justify-between rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center gap-4">
-                  <Button variant="outline" className="gap-2">
-                    <Bookmark className="h-4 w-4" />
-                    Save Channel
+                  <Button variant="outline" className="gap-2" onClick={handleSave} disabled={isSaved}>
+                    <Bookmark className={`h-4 w-4 ${isSaved ? 'fill-current' : ''}`} />
+                    {isSaved ? 'Saved' : 'Save Channel'}
                   </Button>
-                  <Button variant="outline" className="gap-2">
+                  <Button variant="outline" className="gap-2" disabled>
                     <Radio className="h-4 w-4" />
                     Monitor for New Videos
                   </Button>
@@ -268,7 +378,7 @@ function AnalyzeContent() {
                       </span>
                     </div>
                     <Button
-                      onClick={handleDownload}
+                      onClick={() => handleDownload('video')}
                       disabled={selectedEntries.size === 0 || isDownloading}
                       className="gap-2"
                     >
@@ -334,7 +444,7 @@ function PlaylistEntry({
       <Checkbox checked={isSelected} onCheckedChange={onToggle} />
       <span className="w-8 text-center text-sm text-muted-foreground">{index}</span>
       <div className="relative h-16 w-28 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
-        <Image src={entry.thumbnail} alt={entry.title} fill className="object-cover" />
+        {entry.thumbnail && <Image src={entry.thumbnail} alt={entry.title} fill className="object-cover" />}
         <div className="absolute inset-0 flex items-center justify-center bg-background/50 opacity-0 transition-opacity group-hover:opacity-100">
           <Play className="h-6 w-6 text-foreground" fill="currentColor" />
         </div>
@@ -365,7 +475,7 @@ function ChannelVideoCard({
   return (
     <div className="group relative rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/30">
       <div className="relative aspect-video bg-muted">
-        <Image src={entry.thumbnail} alt={entry.title} fill className="object-cover" />
+        {entry.thumbnail && <Image src={entry.thumbnail} alt={entry.title} fill className="object-cover" />}
         <div className="absolute bottom-2 right-2 rounded-md bg-background/80 px-1.5 py-0.5 backdrop-blur-sm">
           <span className="text-xs font-medium">{formatDuration(entry.duration)}</span>
         </div>

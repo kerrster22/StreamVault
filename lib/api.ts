@@ -11,51 +11,78 @@ import type {
   JobStatusResponse,
 } from './types'
 
-import {
-  mockVideoSource,
-  mockPlaylistSource,
-  mockChannelSource,
-  mockActiveDownloads,
-  mockQueuedDownloads,
-  mockCompletedDownloads,
-  mockFailedDownloads,
-  mockLibraryItems,
-  mockSavedChannels,
-  mockSavedPlaylists,
-  mockHistory,
-} from './mock-data'
-
-// Simulate network delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-// API Base URL - will be configured for real backend later
+// API base — Next.js rewrites /api/* to the FastAPI backend automatically.
+// Override with NEXT_PUBLIC_API_URL if you're running the frontend outside Docker.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api'
+
+export type ApiErrorCode =
+  | 'INVALID_URL'
+  | 'VALIDATION_ERROR'
+  | 'EXTRACTION_FAILED'
+  | 'AUTH_REQUIRED'
+  | 'RATE_LIMITED'
+  | 'UNSUPPORTED_SOURCE'
+  | 'INTERNAL_ERROR'
+
+export interface ApiError {
+  code: ApiErrorCode
+  message: string
+  details?: Record<string, unknown>
+  suggestedAction?: string
+}
+
+export class ApiRequestError extends Error {
+  readonly status: number
+  /** Structured error code from the backend, or null for plain HTTP errors. */
+  readonly code: ApiErrorCode | null
+  readonly details: Record<string, unknown> | undefined
+  readonly suggestedAction: string | undefined
+  /** Full structured payload — use this when you need the raw backend shape. */
+  readonly apiError: ApiError | null
+
+  constructor(status: number, message: string, apiError: ApiError | null = null) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+    this.apiError = apiError
+    this.code = apiError?.code ?? null
+    this.details = apiError?.details
+    this.suggestedAction = apiError?.suggestedAction
+  }
+}
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    ...init,
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    let apiError: ApiError | null = null
+    try {
+      const body = await res.json()
+      if (body.error?.code) {
+        // Structured error from analyze route
+        apiError = body.error as ApiError
+        message = apiError.message
+      } else if (body.detail) {
+        message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
+      }
+    } catch {}
+    throw new ApiRequestError(res.status, message, apiError)
+  }
+  return res.json() as Promise<T>
+}
 
 /**
  * Analyze a URL and return metadata
  * POST /api/analyze
  */
 export async function analyzeUrl(request: AnalyzeRequest): Promise<AnalyzeResponse> {
-  await delay(800) // Simulate network delay
-  
-  // Mock detection based on URL patterns
-  const url = request.url.toLowerCase()
-  
-  if (url.includes('playlist')) {
-    return mockPlaylistSource
-  } else if (url.includes('channel') || url.includes('@')) {
-    return mockChannelSource
-  } else {
-    return mockVideoSource
-  }
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/analyze`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify(request),
-  // })
-  // return response.json()
+  return apiFetch<AnalyzeResponse>('/analyze', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
 }
 
 /**
@@ -63,51 +90,22 @@ export async function analyzeUrl(request: AnalyzeRequest): Promise<AnalyzeRespon
  * POST /api/download
  */
 export async function startDownload(request: DownloadRequest): Promise<DownloadResponse> {
-  await delay(300)
-  
-  return {
-    jobId: `job_${Date.now()}`,
-    status: 'queued',
-  }
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/download`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify(request),
-  // })
-  // return response.json()
+  return apiFetch<DownloadResponse>('/download', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
 }
 
 /**
- * Get job status
+ * Get job status (live — backed by Redis in the API)
  * GET /api/jobs/:id
  */
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-  await delay(200)
-  
-  const allJobs = [...mockActiveDownloads, ...mockQueuedDownloads, ...mockCompletedDownloads, ...mockFailedDownloads]
-  const job = allJobs.find(j => j.jobId === jobId)
-  
-  if (!job) {
-    throw new Error('Job not found')
-  }
-  
-  return {
-    jobId: job.jobId,
-    status: job.status,
-    progress: job.progress,
-    speed: job.speed,
-    eta: job.eta,
-  }
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/jobs/${jobId}`)
-  // return response.json()
+  return apiFetch<JobStatusResponse>(`/jobs/${jobId}`)
 }
 
 /**
- * Get all download jobs
+ * Get all download jobs grouped by status
  * GET /api/jobs
  */
 export async function getDownloads(): Promise<{
@@ -116,18 +114,7 @@ export async function getDownloads(): Promise<{
   completed: DownloadJob[]
   failed: DownloadJob[]
 }> {
-  await delay(300)
-  
-  return {
-    active: mockActiveDownloads,
-    queued: mockQueuedDownloads,
-    completed: mockCompletedDownloads,
-    failed: mockFailedDownloads,
-  }
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/jobs`)
-  // return response.json()
+  return apiFetch<{ active: DownloadJob[]; queued: DownloadJob[]; completed: DownloadJob[]; failed: DownloadJob[] }>('/jobs')
 }
 
 /**
@@ -135,11 +122,7 @@ export async function getDownloads(): Promise<{
  * DELETE /api/jobs/:id
  */
 export async function cancelDownload(jobId: string): Promise<void> {
-  await delay(200)
-  console.log('Cancelled job:', jobId)
-  
-  // Real implementation:
-  // await fetch(`${API_BASE}/jobs/${jobId}`, { method: 'DELETE' })
+  await apiFetch(`/jobs/${jobId}`, { method: 'DELETE' })
 }
 
 /**
@@ -147,16 +130,7 @@ export async function cancelDownload(jobId: string): Promise<void> {
  * POST /api/jobs/:id/retry
  */
 export async function retryDownload(jobId: string): Promise<DownloadResponse> {
-  await delay(300)
-  
-  return {
-    jobId: `job_${Date.now()}`,
-    status: 'queued',
-  }
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/jobs/${jobId}/retry`, { method: 'POST' })
-  // return response.json()
+  return apiFetch<DownloadResponse>(`/jobs/${jobId}/retry`, { method: 'POST' })
 }
 
 /**
@@ -164,12 +138,7 @@ export async function retryDownload(jobId: string): Promise<DownloadResponse> {
  * GET /api/library
  */
 export async function getLibrary(): Promise<LibraryItem[]> {
-  await delay(300)
-  return mockLibraryItems
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/library`)
-  // return response.json()
+  return apiFetch<LibraryItem[]>('/library')
 }
 
 /**
@@ -177,28 +146,25 @@ export async function getLibrary(): Promise<LibraryItem[]> {
  * GET /api/channels
  */
 export async function getChannels(): Promise<SavedChannel[]> {
-  await delay(300)
-  return mockSavedChannels
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/channels`)
-  // return response.json()
+  return apiFetch<SavedChannel[]>('/channels')
 }
 
 /**
  * Save a channel
  * POST /api/channels
  */
-export async function saveChannel(channelId: string, monitoring: boolean): Promise<void> {
-  await delay(300)
-  console.log('Saved channel:', channelId, 'monitoring:', monitoring)
-  
-  // Real implementation:
-  // await fetch(`${API_BASE}/channels`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({ channelId, monitoring }),
-  // })
+export async function saveChannel(params: {
+  channelId: string
+  title?: string
+  thumbnail?: string
+  banner?: string
+  monitoring?: boolean
+  url?: string
+}): Promise<void> {
+  await apiFetch('/channels', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
 }
 
 /**
@@ -206,28 +172,25 @@ export async function saveChannel(channelId: string, monitoring: boolean): Promi
  * GET /api/playlists
  */
 export async function getPlaylists(): Promise<SavedPlaylist[]> {
-  await delay(300)
-  return mockSavedPlaylists
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/playlists`)
-  // return response.json()
+  return apiFetch<SavedPlaylist[]>('/playlists')
 }
 
 /**
  * Save a playlist
  * POST /api/playlists
  */
-export async function savePlaylist(playlistId: string): Promise<void> {
-  await delay(300)
-  console.log('Saved playlist:', playlistId)
-  
-  // Real implementation:
-  // await fetch(`${API_BASE}/playlists`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({ playlistId }),
-  // })
+export async function savePlaylist(params: {
+  playlistId: string
+  title?: string
+  thumbnail?: string
+  uploader?: string
+  itemCount?: number
+  url?: string
+}): Promise<void> {
+  await apiFetch('/playlists', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
 }
 
 /**
@@ -235,12 +198,7 @@ export async function savePlaylist(playlistId: string): Promise<void> {
  * GET /api/history
  */
 export async function getHistory(): Promise<HistoryEntry[]> {
-  await delay(300)
-  return mockHistory
-  
-  // Real implementation:
-  // const response = await fetch(`${API_BASE}/history`)
-  // return response.json()
+  return apiFetch<HistoryEntry[]>('/history')
 }
 
 /**
@@ -250,7 +208,7 @@ export function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = seconds % 60
-  
+
   if (hours > 0) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
@@ -264,12 +222,12 @@ export function formatFileSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let unitIndex = 0
   let size = bytes
-  
+
   while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024
     unitIndex++
   }
-  
+
   return `${size.toFixed(1)} ${units[unitIndex]}`
 }
 
@@ -283,7 +241,7 @@ export function formatRelativeTime(dateString: string): string {
   const diffMins = Math.floor(diffMs / 60000)
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
-  
+
   if (diffMins < 1) return 'Just now'
   if (diffMins < 60) return `${diffMins}m ago`
   if (diffHours < 24) return `${diffHours}h ago`

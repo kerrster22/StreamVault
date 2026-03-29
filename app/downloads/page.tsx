@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Download,
   Clock,
@@ -24,77 +24,73 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  mockActiveDownloads,
-  mockQueuedDownloads,
-  mockCompletedDownloads,
-  mockFailedDownloads,
-} from '@/lib/mock-data'
+import { getDownloads, cancelDownload, retryDownload } from '@/lib/api'
+import type { DownloadJob } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 export default function DownloadsPage() {
   const [activeTab, setActiveTab] = useState('all')
+  const [active, setActive] = useState<DownloadJob[]>([])
+  const [queued, setQueued] = useState<DownloadJob[]>([])
+  const [completed, setCompleted] = useState<DownloadJob[]>([])
+  const [failed, setFailed] = useState<DownloadJob[]>([])
 
-  const allDownloads = [
-    ...mockActiveDownloads,
-    ...mockQueuedDownloads,
-    ...mockCompletedDownloads,
-    ...mockFailedDownloads,
-  ]
+  const inProgressRef = useRef(false)
+
+  const fetchJobs = useCallback(() => {
+    getDownloads()
+      .then(d => {
+        setActive(d.active)
+        setQueued(d.queued)
+        setCompleted(d.completed)
+        setFailed(d.failed)
+        inProgressRef.current = d.active.length > 0 || d.queued.length > 0
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchJobs()
+    const id = setInterval(() => { if (inProgressRef.current) fetchJobs() }, 3000)
+    return () => clearInterval(id)
+  }, [fetchJobs])
+
+  const allDownloads = [...active, ...queued, ...completed, ...failed]
 
   const stats = [
-    {
-      label: 'Active',
-      value: mockActiveDownloads.length,
-      icon: Download,
-      color: 'text-primary',
-      bgColor: 'bg-primary/10',
-    },
-    {
-      label: 'Queued',
-      value: mockQueuedDownloads.length,
-      icon: Clock,
-      color: 'text-muted-foreground',
-      bgColor: 'bg-muted',
-    },
-    {
-      label: 'Completed',
-      value: mockCompletedDownloads.length,
-      icon: CheckCircle2,
-      color: 'text-success',
-      bgColor: 'bg-success/10',
-    },
-    {
-      label: 'Failed',
-      value: mockFailedDownloads.length,
-      icon: XCircle,
-      color: 'text-destructive',
-      bgColor: 'bg-destructive/10',
-    },
+    { label: 'Active', value: active.length, icon: Download, color: 'text-primary', bgColor: 'bg-primary/10' },
+    { label: 'Queued', value: queued.length, icon: Clock, color: 'text-muted-foreground', bgColor: 'bg-muted' },
+    { label: 'Completed', value: completed.length, icon: CheckCircle2, color: 'text-success', bgColor: 'bg-success/10' },
+    { label: 'Failed', value: failed.length, icon: XCircle, color: 'text-destructive', bgColor: 'bg-destructive/10' },
   ]
 
   const getFilteredDownloads = () => {
     switch (activeTab) {
-      case 'active':
-        return mockActiveDownloads
-      case 'queued':
-        return mockQueuedDownloads
-      case 'completed':
-        return mockCompletedDownloads
-      case 'failed':
-        return mockFailedDownloads
-      default:
-        return allDownloads
+      case 'active': return active
+      case 'queued': return queued
+      case 'completed': return completed
+      case 'failed': return failed
+      default: return allDownloads
     }
+  }
+
+  const handleCancel = async (jobId: string) => {
+    await cancelDownload(jobId).catch(() => {})
+    fetchJobs()
+  }
+
+  const handleRetry = async (jobId: string) => {
+    await retryDownload(jobId).catch(() => {})
+    fetchJobs()
   }
 
   return (
     <div className="flex min-h-screen bg-background">
       <AppSidebar />
-      
+
       <main className="flex-1 pl-64">
         <TopBar />
-        
+
         <div className="p-6 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -143,10 +139,10 @@ export default function DownloadsPage() {
             <div className="flex items-center justify-between">
               <TabsList className="bg-muted/50">
                 <TabsTrigger value="all">All ({allDownloads.length})</TabsTrigger>
-                <TabsTrigger value="active">Active ({mockActiveDownloads.length})</TabsTrigger>
-                <TabsTrigger value="queued">Queued ({mockQueuedDownloads.length})</TabsTrigger>
-                <TabsTrigger value="completed">Completed ({mockCompletedDownloads.length})</TabsTrigger>
-                <TabsTrigger value="failed">Failed ({mockFailedDownloads.length})</TabsTrigger>
+                <TabsTrigger value="active">Active ({active.length})</TabsTrigger>
+                <TabsTrigger value="queued">Queued ({queued.length})</TabsTrigger>
+                <TabsTrigger value="completed">Completed ({completed.length})</TabsTrigger>
+                <TabsTrigger value="failed">Failed ({failed.length})</TabsTrigger>
               </TabsList>
 
               <div className="flex items-center gap-2">
@@ -192,10 +188,10 @@ export default function DownloadsPage() {
                   <DownloadQueueCard
                     key={job.jobId}
                     job={job}
-                    onCancel={() => console.log('Cancel', job.jobId)}
-                    onRetry={() => console.log('Retry', job.jobId)}
-                    onPause={() => console.log('Pause', job.jobId)}
-                    onResume={() => console.log('Resume', job.jobId)}
+                    onCancel={() => handleCancel(job.jobId)}
+                    onRetry={() => handleRetry(job.jobId)}
+                    onPause={() => {}}
+                    onResume={() => {}}
                   />
                 ))
               )}
@@ -209,31 +205,11 @@ export default function DownloadsPage() {
 
 function EmptyState({ tab }: { tab: string }) {
   const states: Record<string, { icon: typeof Download; title: string; description: string }> = {
-    all: {
-      icon: Download,
-      title: 'No downloads yet',
-      description: 'Add a URL from the home page to start downloading',
-    },
-    active: {
-      icon: Play,
-      title: 'No active downloads',
-      description: 'All downloads are either completed or queued',
-    },
-    queued: {
-      icon: Clock,
-      title: 'Queue is empty',
-      description: 'Add more items to your download queue',
-    },
-    completed: {
-      icon: CheckCircle2,
-      title: 'No completed downloads',
-      description: 'Completed downloads will appear here',
-    },
-    failed: {
-      icon: XCircle,
-      title: 'No failed downloads',
-      description: 'Failed downloads will appear here for retry',
-    },
+    all: { icon: Download, title: 'No downloads yet', description: 'Add a URL from the home page to start downloading' },
+    active: { icon: Play, title: 'No active downloads', description: 'All downloads are either completed or queued' },
+    queued: { icon: Clock, title: 'Queue is empty', description: 'Add more items to your download queue' },
+    completed: { icon: CheckCircle2, title: 'No completed downloads', description: 'Completed downloads will appear here' },
+    failed: { icon: XCircle, title: 'No failed downloads', description: 'Failed downloads will appear here for retry' },
   }
 
   const state = states[tab] || states.all

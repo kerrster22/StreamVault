@@ -1,0 +1,15 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copy application code
+COPY . .
+
+EXPOSE 3000
+
+# next dev for development (hot reload); use `next start` after `next build` for production
+CMD ["npm", "run", "dev"]

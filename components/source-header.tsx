@@ -29,7 +29,7 @@ function VideoHeader({ source, className }: { source: VideoSource; className?: s
       {/* Thumbnail */}
       <div className="relative aspect-video w-80 flex-shrink-0 overflow-hidden rounded-xl bg-muted">
         <Image
-          src={source.thumbnail}
+          src={source.thumbnail || '/placeholder.jpg'}
           alt={source.title}
           fill
           className="object-cover"
@@ -79,7 +79,7 @@ function PlaylistHeader({ source, className }: { source: PlaylistSource; classNa
         <div className="absolute -right-4 -top-4 h-full w-full rounded-xl bg-muted/30" />
         <div className="relative aspect-video overflow-hidden rounded-xl bg-muted">
           <Image
-            src={source.thumbnail}
+            src={source.thumbnail || '/placeholder.jpg'}
             alt={source.title}
             fill
             className="object-cover"
@@ -119,12 +119,14 @@ function ChannelHeader({ source, className }: { source: ChannelSource; className
     <div className={cn('space-y-4', className)}>
       {/* Banner */}
       <div className="relative h-40 overflow-hidden rounded-xl bg-muted">
-        <Image
-          src={source.banner}
-          alt={`${source.title} banner`}
-          fill
-          className="object-cover"
-        />
+        {source.banner && (
+          <Image
+            src={source.banner}
+            alt={`${source.title} banner`}
+            fill
+            className="object-cover"
+          />
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
       </div>
       
@@ -132,7 +134,7 @@ function ChannelHeader({ source, className }: { source: ChannelSource; className
       <div className="flex items-center gap-4">
         <div className="relative -mt-12 h-24 w-24 overflow-hidden rounded-full border-4 border-background bg-muted">
           <Image
-            src={source.thumbnail}
+            src={source.thumbnail || '/placeholder.jpg'}
             alt={source.title}
             fill
             className="object-cover"

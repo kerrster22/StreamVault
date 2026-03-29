@@ -47,7 +47,7 @@ export function DownloadQueueCard({
         {/* Thumbnail */}
         <div className="relative h-12 w-20 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
           <Image
-            src={job.thumbnail}
+            src={job.thumbnail || '/placeholder.jpg'}
             alt={job.title}
             fill
             className="object-cover"
@@ -92,7 +92,7 @@ export function DownloadQueueCard({
         {/* Thumbnail */}
         <div className="relative h-24 w-40 flex-shrink-0 overflow-hidden rounded-lg bg-muted">
           <Image
-            src={job.thumbnail}
+            src={job.thumbnail || '/placeholder.jpg'}
             alt={job.title}
             fill
             className="object-cover"

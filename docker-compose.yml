@@ -1,0 +1,97 @@
+version: "3.9"
+
+# StreamVault — full stack
+# Usage: docker compose up --build
+#
+# Services:
+#   redis    — job queue broker
+#   api      — FastAPI backend  (port 8000, hot-reload in dev)
+#   worker   — RQ download worker (yt-dlp + ffmpeg)
+#   frontend — Next.js UI       (port 3000, hot-reload in dev)
+
+x-backend-common: &backend-common
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment:
+    APP_ENV: development
+    DATABASE_URL: sqlite:////data/streamvault.db
+    REDIS_URL: redis://redis:6379
+    MEDIA_ROOT: /media
+    TEMP_DOWNLOAD_ROOT: /tmp/streamvault
+    YTDLP_COOKIES_FILE: /app/cookies/cookies.txt
+  volumes:
+    - media_data:/media
+    - db_data:/data
+    - ./backend:/app        # bind-mount source for hot-reload
+    - ./cookies:/app/cookies:ro
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  # ── Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  api:
+    <<: *backend-common
+    ports:
+      - "8000:8000"
+    # Override CMD to enable hot-reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      APP_ENV: development
+      DATABASE_URL: sqlite:////data/streamvault.db
+      REDIS_URL: redis://redis:6379
+      MEDIA_ROOT: /media
+      TEMP_DOWNLOAD_ROOT: /tmp/streamvault
+      CORS_ORIGINS: "http://localhost:3000,http://frontend:3000"
+      YTDLP_COOKIES_FILE: /app/cookies/cookies.txt
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ── RQ Download Worker ────────────────────────────────────────────────────
+  worker:
+    <<: *backend-common
+    command: python -m app.workers.rq_worker
+
+  # ── Next.js Frontend ──────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Server-side only: used by Next.js rewrite() to reach the API container
+      BACKEND_URL: http://api:8000
+      NODE_ENV: development
+    volumes:
+      # Bind-mount source for hot-reload; anonymous volumes protect installed deps
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  media_data:
+  db_data:
